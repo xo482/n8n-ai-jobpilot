@@ -1,0 +1,497 @@
+{
+  "name": "My workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "simple": false,
+        "filters": {
+          "sender": "REDACTED_EMAIL"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -448,
+        -272
+      ],
+      "id": "0463f70d-ff5c-4113-9a78-ce1c142d2cba",
+      "name": "이메일 수신 감지기",
+      "notesInFlow": false,
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "REDACTED_ID",
+          "name": "REDACTED"
+        }
+      },
+      "notes": "특정 Gmail 계정에서 이메일이 수신되었을 때 워크플로우를 트리거합니다."
+    },
+    {
+      "parameters": {
+        "jsCode": "const recIdxList = new Set();\n\nfor (const item of $input.all()) {\n  const inputText = item.json[\"text\"];\n  const lines = inputText.split('\\n').map(line => line.trim());\n\n  for (const line of lines) {\n    if (line.includes('localhost:8080/jobs/relay/view')) {\n      const cleanUrl = line.replace(/^<|>$/g, '');\n      const match = cleanUrl.match(/rec_idx=(\\d+)/);\n\n      if (match && match[1]) {\n        recIdxList.add(match[1]);\n      }\n    }\n  }\n}\n\nreturn Array.from(recIdxList).map(rec_idx => ({ json: { rec_idx } }));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -256,
+        -272
+      ],
+      "id": "85320271-b005-40b9-8ddb-404216255125",
+      "name": "공고 URL 파싱",
+      "notes": "이메일 본문에서 채용 공고의 고유 인덱스값을 추출하고 중복을 제거"
+    },
+    {
+      "parameters": {
+        "options": {
+          "reset": false
+        }
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -16,
+        -272
+      ],
+      "id": "e8289610-5726-4e1d-b7c7-b3bc3ed271e3",
+      "name": "공고 URL 루프 처리",
+      "executeOnce": false,
+      "retryOnFail": false,
+      "notes": "고유 인덱스값에 대해 하나씩 순차적으로 HTTP 요청을 보낼 수 있도록 분할 처리"
+    },
+    {
+      "parameters": {
+        "url": "REDACTED_URL",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "rec_idx",
+              "value": "={{ $json.rec_idx }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        224,
+        -256
+      ],
+      "id": "4423b1b9-a28c-4625-86db-bd3a65a16d80",
+      "name": "공고 상세 페이지 요청",
+      "notes": "각 고유 인덱스값에 대해 상세 채용 페이지 HTML을 요청"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o",
+          "mode": "list",
+          "cachedResultName": "GPT-4O"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=당신은 이메일로 수신된 내용을 분석하여 채용 공고인지 판단하고, 공고의 내용을 JSON 형태로 생성하는  AI입니다.\n\n1. 이메일 내용이 새로운 채용 공고에 대한 내용인지 판단하세요.\n2. 채용 공고가 유효하지 않다면 skip이라는 문자열을 반환하세요.\n3. 채용 공고라면 아래 JSON 형식으로 정리하세요.\n\n반드시 필드 이름을 그대로 사용하고, 값이 없으면 빈 문자열(\"\")로 입력하세요.\n\n{\n\"기업명\": \"\",\n\"우선순위\": \"\",\n\"지원상태\": \"지원 전\",\n\"직책\": [],\n\"직무\": [],\n\"지원일\": \"\",\n\"마감일\": \"\",\n\"합류여정\": \"\",\n\"회사규모\": \"\",\n\"상태\": \"지원 전\"\n}\n\n우선순위 선택지는 다음 중에서 골라야 합니다:\n\n- 1순위\n- 2순위\n- 후순위\n\n우선순위 분류 기준은 다음과 같습니다:\n\n- 1순위: 스타트업 또는 대기업 인턴\n- 2순위: AI workflow 관련 기업\n- 그 외는 후순위\n\n직책 선택지는 다음 중에서 골라야 합니다:\n\n- 인턴, 신입\n\n직무는 이메일 내용에서 유추하여 자유롭게 복수 선택 가능합니다.\n직무는 여러가지가 있을 수 있으며 그 중 AI workflow 관련 업무나 데이터 엔지니어 관련 업무가 있다면 해당 업무를 선택합니다.\n\n회사규모 선택지는 다음 중에서 골라야 합니다(본문에 잘 찾아보면 있음):\n- 공기업/공공기관, 외국계, 상장사, 스타트업, 강소기업, 중견기업, 대기업, 중소기업\n\n지원상태 선택지와 상태 선택지는 고정값 \"지원 전\"으로 설정하세요.\n지원일 선택지는 고정값 \"\"으로 설정하세요\n\n마감일은 이메일에서 유추한 날짜를 YYYY-MM-DD 형식으로 작성하세요. 명확하지 않으면 빈 문자열(\"\")로 입력하세요.\n\n합류여정 선택지는 채용 절차를 순서대로 정리한 문자열입니다.  \n각 절차는 `->` 기호로 구분하며, 예시는 다음과 같습니다:\n\n- 서류전형 -> 1차 면접 -> 과제 전형 -> 임원 면접\n- 서류전형 -> 코딩테스트 -> 인터뷰\n- 서류 -> 인터뷰\n\n이메일 본문:\n{{ $json.data }}",
+              "role": "system"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.8,
+      "position": [
+        384,
+        -256
+      ],
+      "id": "71b07095-bfd7-4453-8a43-f6d3711941f6",
+      "name": "AI 공고 분석",
+      "credentials": {
+        "openAiApi": {
+          "id": "REDACTED_ID",
+          "name": "REDACTED"
+        }
+      },
+      "notes": "OpenAI GPT-4o 모델에게 HTML 내용을 전달하여 정상적인 채용 공고인지 판단하고, 공고일 경우 구조화된 JSON으로 변환"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "b6d967e6-e49b-4c9d-88bb-b680a213f243",
+              "leftValue": "={{ $json.message.content.trim() == \"skip\" }}",
+              "rightValue": "=\"skip\"",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        736,
+        -256
+      ],
+      "id": "acc23560-d268-4ace-aa13-4f9fabd367ca",
+      "name": "유효한 공고 여부 확인",
+      "notes": " AI 응답이 \"skip\"인지 확인하여 채용 공고가 아닌 경우 루프를 계속 돌리고, 맞다면 Slack으로 전송"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = JSON.parse(items[0].json.message.content);\nconst 기업명 = item[\"기업명\"];\nconst 직책 = item[\"직책\"].join(\", \");\nconst 직무 = item[\"직무\"].join(\", \");\nconst 마감일 = item[\"마감일\"];\nconst 우선순위 = item[\"우선순위\"];\nconst 지원상태 = item[\"지원상태\"];\nconst 합류여정 = item[\"합류여정\"];\nconst 회사규모 = item[\"회사규모\"];\n\n\nreturn {\n    json: {\n      blocks: [\n        {\n          type: \"section\",\n          text: {\n            type: \"mrkdwn\",\n            text: `*${item[\"기업명\"]}* \\n*회사규모:* ${item[\"회사규모\"]} \\n*직책:* ${item[\"직책\"].join(\", \")}\\n*직무:* ${item[\"직무\"].join(\", \")}\\n*마감일:* ${item[\"마감일\"]}\\n*우선순위:* ${item[\"우선순위\"]}\\n*지원상태:* ${item[\"지원상태\"]}\\n*합류여정:* ${item[\"합류여정\"]}`\n          }\n        },\n        {\n          type: \"actions\",\n          elements: [\n            {\n              type: \"button\",\n              text: { type: \"plain_text\", text: \"✅ 등록\" },\n              style: \"primary\",\n              action_id: \"register_job\",\n              value: JSON.stringify(item)\n            }\n          ]\n        }\n      ]\n    }\n  };\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1008,
+        -256
+      ],
+      "id": "f121ef51-24d4-4611-82c3-1354452caeff",
+      "name": "Slack 메시지 포맷 생성",
+      "notes": "AI가 생성한 공고 정보를 Slack BlockKit 포맷으로 구성합니다. 버튼 클릭 시 공고의 내용을 전송 값으로 포함 시켜 전송"
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "#신규-공고-알림",
+          "mode": "name"
+        },
+        "messageType": "block",
+        "blocksUi": "={{ $json }}",
+        "otherOptions": {}
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        1216,
+        -256
+      ],
+      "id": "c69c4232-02b5-4a74-ab85-5e3783411149",
+      "name": "Slack 공고 알림 전송",
+      "webhookId": "REDACTED",
+      "credentials": {
+        "slackApi": {
+          "id": "REDACTED_ID",
+          "name": "REDACTED"
+        }
+      },
+      "notes": "Slack 채널 #신규-공고-알림에 채용 공고 메시지를 전송합니다. 사용자는 버튼을 눌러 등록을 진행할 수 있음"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "slack-button-handler",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -464,
+        80
+      ],
+      "id": "296898b7-f9ac-47c7-a4a8-5f1f224b1310",
+      "name": "Slack 버튼 클릭 수신기",
+      "webhookId": "REDACTED",
+      "notes": "사용자가 Slack에서 “✅ 등록” 버튼을 클릭했을 때 수신하는 Webhook. 이후 DB 저장 단계로 넘어감"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Loop over input items and add a new field called 'myNewField' to the JSON of each one\nconst payload = JSON.parse($input.first().json.body.payload)\n\n\nreturn [payload]"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -256,
+        80
+      ],
+      "id": "a9d61da9-36bf-4ab0-be4a-48d1617fa7e1",
+      "name": "Slack 버튼 Payload 파싱",
+      "notesInFlow": false,
+      "notes": "Slack에서 전달된 payload를 파싱하여 버튼에 담긴 JSON 형태의 채용 공고 정보를 추출"
+    },
+    {
+      "parameters": {
+        "jsCode": "const result = $input.first().json.message.blocks[1].elements[0].value\n\nreturn [{\n  json: JSON.parse(result)\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -64,
+        80
+      ],
+      "id": "8a2f4dad-f861-44e3-af21-0c074a8eb1a3",
+      "name": "Notion용 JSON 정제",
+      "notes": "Slack 버튼에서 받은 JSON을 Notion API에서 요구하는 형식으로 변환"
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "databaseId": {
+          "__rl": true,
+          "value": "REDACTED_DB_ID",
+          "mode": "list",
+          "cachedResultName": "취업 지원 현황 템플릿",
+          "cachedResultUrl": "REDACTED_URL"
+        },
+        "title": "={{ $json[\"기업명\"] }}",
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "우선순위|multi_select",
+              "multiSelectValue": "={{ $json[\"우선순위\"] }}"
+            },
+            {
+              "key": "지원상태|status",
+              "statusValue": "지원 전"
+            },
+            {
+              "key": "직책|multi_select",
+              "multiSelectValue": "={{ $json[\"직책\"] }}"
+            },
+            {
+              "key": "직무|multi_select",
+              "multiSelectValue": "={{ $json[\"직무\"] }}"
+            },
+            {
+              "key": "마감일|date",
+              "includeTime": false,
+              "date": "={{ $json[\"마감일\"] }}"
+            },
+            {
+              "key": "합류여정|rich_text",
+              "textContent": "={{ $json[\"합류여정\"] }}"
+            },
+            {
+              "key": "회사규모|multi_select",
+              "statusValue": "={{ $json[\"회사규모\"] }}"
+            },
+            {
+              "key": "상태|status",
+              "statusValue": "={{ $json[\"상태\"] }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        128,
+        80
+      ],
+      "id": "60a926e2-b386-4b82-816b-67d96b6f7015",
+      "name": "Notion 공고 등록",
+      "credentials": {
+        "notionApi": {
+          "id": "REDACTED_ID",
+          "name": "REDACTED"
+        }
+      },
+      "notes": "반환된 JSON 데이터를 Notion의 취업 지원 현황 템플릿 데이터베이스에 등록"
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "#신규-공고-알림",
+          "mode": "name"
+        },
+        "text": "=\\n\"{{ $json.name }}\"에 대한 공고를 정상적으로 저장했습니다.\\n",
+        "otherOptions": {}
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        352,
+        80
+      ],
+      "id": "a1033454-2b62-4f47-8615-0594f7cbbed1",
+      "name": "Slack 등록 완료 알림",
+      "webhookId": "REDACTED",
+      "credentials": {
+        "slackApi": {
+          "id": "REDACTED_ID",
+          "name": "REDACTED"
+        }
+      },
+      "notes": "등록이 완료되면 Slack에 완료 메시지를 보냅니다. 공고명(name)을 포함하여 알림을 전달"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "이메일 수신 감지기": {
+      "main": [
+        [
+          {
+            "node": "공고 URL 파싱",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "공고 URL 파싱": {
+      "main": [
+        [
+          {
+            "node": "공고 URL 루프 처리",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "공고 URL 루프 처리": {
+      "main": [
+        [],
+        [
+          {
+            "node": "공고 상세 페이지 요청",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "공고 상세 페이지 요청": {
+      "main": [
+        [
+          {
+            "node": "AI 공고 분석",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI 공고 분석": {
+      "main": [
+        [
+          {
+            "node": "유효한 공고 여부 확인",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "유효한 공고 여부 확인": {
+      "main": [
+        [
+          {
+            "node": "공고 URL 루프 처리",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Slack 메시지 포맷 생성",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack 메시지 포맷 생성": {
+      "main": [
+        [
+          {
+            "node": "Slack 공고 알림 전송",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack 버튼 클릭 수신기": {
+      "main": [
+        [
+          {
+            "node": "Slack 버튼 Payload 파싱",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack 버튼 Payload 파싱": {
+      "main": [
+        [
+          {
+            "node": "Notion용 JSON 정제",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notion용 JSON 정제": {
+      "main": [
+        [
+          {
+            "node": "Notion 공고 등록",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notion 공고 등록": {
+      "main": [
+        [
+          {
+            "node": "Slack 등록 완료 알림",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "bfffcc84-fcdd-4f6c-b75b-9c41e5558927",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "90359327c5135429bc6e3cac163b1941c4c2d1c5eb5516b38161beadb44846c0"
+  },
+  "id": "cvZfAXPubqvp2FFA",
+  "tags": []
+}
